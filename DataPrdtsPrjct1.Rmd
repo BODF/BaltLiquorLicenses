@@ -1,0 +1,110 @@
+---
+title: "Baltimore Liquor"
+author: "BODF"
+date: "12/24/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Current date and time (format = Weekday Month Day Hour:Min:Sec Year):
+```{r date, echo = TRUE}
+date()
+```
+# Liquor licenses in Baltimore City  
+The Baltimore open data website allows us to access a wide range of data sets 
+related to the operation of a city. I decided to download their liqour license 
+data and plot it against the locations of the licenses (where can I find the 
+most beer?).  
+
+The data are broken down by license end date (I chose 2018 for relevancy), 
+name of the establishment, liquor license type, and location. The names are 
+plotted as popup messages as you select individual markers. The liquor license 
+type dictates the color, note the types are as follows:  
+
+* B = Beer
+* BW = Beer and Wine
+* BWL = Beer, Wine, and Liquor
+* AE = Adult Entertainment (unclear why Baltimore makes this distinction)
+
+The data markers are clustered in the map, so the liquor license type (color) 
+will not be obvious until you zoom in on individual licenses.
+
+```{r, echo = FALSE}
+suppressPackageStartupMessages(library(leaflet))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(lubridate))
+suppressPackageStartupMessages(library(stringr))
+
+# Import the data, filter out only data with a license that goes thru 2018,
+# then select out just the columns we need: TradeName, SubClass, `Location 1`
+# make a map of these vars with color dictated by Subclass and popup by TradeName
+setwd("~/Documents/Classes/DataSciCourse/")
+suppressMessages(data <- read_csv("Liquor_Licenses.csv", na = c("", "NA", "N/A")) %>%
+        mutate(LicenseEndDate = mdy(LicenseEndDate)) %>%
+        filter(LicenseEndDate >= mdy("01/01/2018"))%>% # grab only the pubs still open
+        select(SubClass, TradeName, `Location 1`) %>%
+        rename(Location = `Location 1`))
+
+# below code extracts any parenthetical expressions in "Location". Some of this 
+# is lat by longitude, some is not: so I include a logical test. If passed, the 
+# string is trimmed and latitude + longitude are extracted, separately
+index <- 1
+coord_nums <- data.frame(lng = NA, lat = NA)
+suppressWarnings(for(element in data$Location){
+    buzz <- strsplit(str_extract(element, "\\(.*\\)"), "")[[1]]
+    if(!is.na(as.numeric(buzz[2]))){
+        buffer <- buzz[-c(1,length(buzz))]
+        id <- which(buffer==",")
+        latit <- as.numeric(paste(buffer[1:(id-1)], collapse=''))
+        longit <- as.numeric(paste(buffer[(id+1):length(buffer)], collapse=''))
+        coord_nums[index, 1] <- longit
+        coord_nums[index, 2] <- latit
+        index <- index+1
+    }
+})
+
+# grab a subsettable logical list and trim data using it
+value <- logical()
+suppressWarnings(for(element in data$Location){
+    buzz <- strsplit(str_extract(element, "\\(.*\\)"), "")[[1]]
+    if(!is.na(as.numeric(buzz[2]))){
+        value <- c(value, TRUE)
+    } else {value <- c(value, FALSE)}
+})
+data <- data[value,]
+
+# now replace Location with lat x long
+data <- data %>% 
+        select(-Location) %>% 
+        mutate(lat = coord_nums$lat, lng = coord_nums$lng)
+rm(coord_nums) # free up memory
+
+# assign colors based on subClass
+coloring <- character()
+for(element in data$SubClass){
+    if(element == "AE"){
+        coloring <- c(coloring, "#ca0020")
+    } else if(element == "B"){
+        coloring <- c(coloring, "#74c476")
+    } else if(element == "BW"){
+        coloring <- c(coloring, "#969696")
+    } else if(element == "BWL"){
+        coloring <- c(coloring, "#2171b5")
+    }
+}
+
+# Make the Map!
+data <- as.data.frame(data)
+suppressMessages(data %>% 
+        leaflet() %>% 
+        addTiles() %>% 
+        addCircleMarkers(color = coloring, 
+                   clusterOptions = markerClusterOptions(), 
+                   popup = data$TradeName) %>%
+        addLegend(labels = c("AE", "B", "BW", "BWL"), 
+                  colors=c("#ca0020", "#74c476", "#969696", "#2171b5")))
+```
